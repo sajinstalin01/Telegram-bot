@@ -28,6 +28,15 @@ ADMIN_IDS = {
     for value in os.getenv("ADMIN_IDS", "").split(",")
     if value.strip().isdigit()
 }
+# Only these owner IDs can grant admin access. Keep OWNER_IDS limited to trusted owners.
+OWNER_IDS = {
+    int(value.strip())
+    for value in os.getenv("OWNER_IDS", "").split(",")
+    if value.strip().isdigit()
+}
+if not OWNER_IDS:
+    # Backward-compatible fallback; configure OWNER_IDS explicitly for clear separation.
+    OWNER_IDS = set(ADMIN_IDS)
 ALLOWED_HOSTS = {
     "youtube.com", "youtu.be", "youtube-nocookie.com",
     "instagram.com", "facebook.com", "fb.watch",
@@ -83,8 +92,12 @@ def valid_url(raw):
         return False
 
 
+async def is_owner(user_id):
+    return user_id in OWNER_IDS
+
+
 async def is_admin(user_id):
-    if user_id in ADMIN_IDS:
+    if user_id in OWNER_IDS or user_id in ADMIN_IDS:
         return True
     if db_pool is None:
         return False
@@ -290,8 +303,9 @@ async def admin_panel(message: Message):
     await message.answer(
         "🛠 Admin Manager\n\n"
         "Use the buttons for bot statistics, recent download activity and the admin list.\n"
-        "Commands:\n/admin_add USER_ID — add an admin\n/admin_remove USER_ID — remove an admin\n"
-        "/admin_stats — download statistics\n/admin_recent — recent activity",
+        "Commands:\n/admin_add USER_ID — owner-only: grant admin access\n"
+        "/admin_stats — download statistics\n/admin_recent — recent activity\n"
+        "Only the configured owner can grant new admin access; admins cannot promote others.",
         reply_markup=admin_keyboard(),
     )
 
@@ -343,8 +357,8 @@ async def admin_recent(message: Message):
 
 @dp.message(Command("admin_add"))
 async def admin_add(message: Message):
-    if not message.from_user or not await is_admin(message.from_user.id):
-        await message.answer("⛔ Admin only.")
+    if not message.from_user or not await is_owner(message.from_user.id):
+        await message.answer("⛔ Owner only. Only the configured bot owner can grant admin access.")
         return
     parts = (message.text or "").split()
     if len(parts) != 2 or not parts[1].isdigit():
@@ -364,23 +378,11 @@ async def admin_add(message: Message):
 
 @dp.message(Command("admin_remove"))
 async def admin_remove(message: Message):
-    if not message.from_user or not await is_admin(message.from_user.id):
-        await message.answer("⛔ Admin only.")
-        return
-    parts = (message.text or "").split()
-    if len(parts) != 2 or not parts[1].isdigit():
-        await message.answer("Usage: /admin_remove USER_ID")
-        return
-    target_id = int(parts[1])
-    if target_id in ADMIN_IDS:
-        await message.answer("This ID is configured in ADMIN_IDS and cannot be removed here. Edit .env to remove it.")
-        return
-    if db_pool is None:
-        await message.answer("Configure DATABASE_URL first; dynamic admin changes must be stored persistently.")
-        return
-    async with db_pool.acquire() as conn:
-        result = await conn.execute("DELETE FROM bot_admins WHERE user_id = $1", target_id)
-    await message.answer(f"Admin {target_id} removed." if result.endswith("1") else f"Admin {target_id} was not found.")
+    await message.answer(
+        "Admin removal is disabled in chat. Only the configured owner can grant admin access "
+        "with /admin_add USER_ID. To revoke access, remove the user from the bot_admins table "
+        "in PostgreSQL or remove them from ADMIN_IDS in your .env file."
+    )
 
 
 @dp.callback_query(F.data.startswith("admin:"))
