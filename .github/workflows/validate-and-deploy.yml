@@ -1,0 +1,56 @@
+name: Validate and deploy Telegram bot
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate Python and build Docker image
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: python -m pip install --upgrade pip && pip install -r requirements.txt
+
+      - name: Compile every Python file
+        run: python -m compileall -q .
+
+      - name: Build Docker image
+        run: docker build -t telegram-social-downloader:ci .
+
+  deploy-railway:
+    name: Deploy to Railway (optional)
+    needs: validate
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' && vars.RAILWAY_DEPLOY_ENABLED == 'true'
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install Railway CLI
+        run: npm install --global @railway/cli
+
+      - name: Deploy latest repository code
+        run: railway up --service "${{ vars.RAILWAY_SERVICE_NAME }}" --ci
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
