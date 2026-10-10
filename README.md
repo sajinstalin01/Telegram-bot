@@ -46,3 +46,17 @@ If a configured PostgreSQL connection fails during local execution, the bot logs
 
 ## Notes
 The upload cap defaults to 49 MB for standard Telegram cloud Bot API uploads. Some platforms may block automated downloads or restrict formats. The bot does not bypass private-post access, login walls, DRM, or other access controls. Download only content you own or are authorized to save. Never commit your real `.env`, bot token, or database password.
+
+## Automatic GitHub updates
+
+The GitHub Actions workflow at `.github/workflows/validate-and-deploy.yml` runs on every push to `main` and on pull requests. It installs dependencies, checks every Python file for syntax errors, and builds the Docker image. This helps catch problems before deployment.
+
+### Optional automatic Railway deployment
+To have every successful push to `main` deploy the latest code to Railway, configure these in **GitHub → Settings → Secrets and variables → Actions**:
+- Repository secret `RAILWAY_TOKEN`: a Railway project/environment token with deployment access.
+- Repository variable `RAILWAY_DEPLOY_ENABLED`: set to `true`.
+- Repository variable `RAILWAY_SERVICE_NAME`: the exact Railway service name for this bot.
+
+The deployment job runs only after validation passes. Leave `RAILWAY_DEPLOY_ENABLED` unset or set it to anything other than `true` to disable automatic Railway deployment. Do not put tokens in source files or commit them.
+
+This workflow does not automatically push edits from your Windows computer to GitHub. To publish local changes, commit and push them with Git; the workflow then validates them and (if configured) deploys them.
