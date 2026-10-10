@@ -60,3 +60,13 @@ To have every successful push to `main` deploy the latest code to Railway, confi
 The deployment job runs only after validation passes. Leave `RAILWAY_DEPLOY_ENABLED` unset or set it to anything other than `true` to disable automatic Railway deployment. Do not put tokens in source files or commit them.
 
 This workflow does not automatically push edits from your Windows computer to GitHub. To publish local changes, commit and push them with Git; the workflow then validates them and (if configured) deploys them.
+
+### Automatically push changes from your Windows PC
+To automatically commit and push edits you make in the local project folder:
+1. Pull the latest `main` branch from GitHub and open PowerShell in the repository folder.
+2. Make sure Git is installed, `origin` points to this repository, and GitHub authentication is configured. Configure `git config --global user.name "Your Name"` and `git config --global user.email "you@example.com"` if needed.
+3. Review `.gitignore` and ensure you have not placed secrets in files that Git tracks. The script skips ignored files such as `.env` and local database files.
+4. Run `Set-ExecutionPolicy -Scope Process Bypass` if PowerShell blocks the script, then run `.\auto-push.ps1`.
+5. Leave the PowerShell window open. It checks for changes every 5 seconds, commits them, and pushes commits to `origin/main`. Press `Ctrl+C` to stop it.
+
+**Security note:** Automatic commits publish all non-ignored changes in the repository. Review the files and `.gitignore` first, and never store tokens, passwords, or private data in tracked files. The script expects the `main` branch and will not merge remote conflicts automatically.
