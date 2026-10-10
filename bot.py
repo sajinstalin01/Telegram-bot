@@ -2,9 +2,11 @@ import asyncio
 import logging
 import os
 import re
+import sqlite3
 import tempfile
 import uuid
 from pathlib import Path
+from contextlib import asynccontextmanager
 from urllib.parse import urlparse
 
 import asyncpg
@@ -18,6 +20,7 @@ from yt_dlp import YoutubeDL
 load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
+DATABASE_PATH = os.getenv("DATABASE_PATH", "telegram_bot.db").strip() or "telegram_bot.db"
 MAX_FILE_MB = int(os.getenv("MAX_FILE_MB", "49"))
 MAX_CONCURRENT_DOWNLOADS = max(1, int(os.getenv("MAX_CONCURRENT_DOWNLOADS", "2")))
 DEFAULT_QUALITY = os.getenv("DEFAULT_QUALITY", "best").strip().lower()
@@ -59,6 +62,51 @@ dp = Dispatcher()
 db_pool = None
 download_semaphore = asyncio.Semaphore(MAX_CONCURRENT_DOWNLOADS)
 pending = {}
+
+class SQLiteConnection:
+    """Small asyncpg-compatible adapter for local SQLite storage."""
+
+    def __init__(self, connection):
+        self.connection = connection
+
+    @staticmethod
+    def _sql(query):
+        query = re.sub(r"\$\d+", "?", query)
+        query = query.replace("BIGSERIAL PRIMARY KEY", "INTEGER PRIMARY KEY AUTOINCREMENT")
+        query = query.replace("BIGINT", "INTEGER")
+        query = query.replace("TIMESTAMPTZ NOT NULL DEFAULT NOW()", "TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP")
+        return query
+
+    async def execute(self, query, *args):
+        cursor = self.connection.execute(self._sql(query), args)
+        self.connection.commit()
+        verb = query.lstrip().split(None, 1)[0].upper()
+        return f"{verb} {max(cursor.rowcount, 0)}"
+
+    async def fetch(self, query, *args):
+        cursor = self.connection.execute(self._sql(query), args)
+        return cursor.fetchall()
+
+    async def fetchval(self, query, *args):
+        cursor = self.connection.execute(self._sql(query), args)
+        row = cursor.fetchone()
+        return row[0] if row else None
+
+
+class SQLitePool:
+    def __init__(self, path):
+        self.connection = sqlite3.connect(path)
+        self.connection.row_factory = sqlite3.Row
+        self.adapter = SQLiteConnection(self.connection)
+
+    @asynccontextmanager
+    async def acquire(self):
+        yield self.adapter
+
+    async def close(self):
+        self.connection.close()
+
+
 
 
 def extract_url(text):
@@ -113,10 +161,19 @@ async def is_admin(user_id):
 
 async def db_init():
     global db_pool
-    if not DATABASE_URL:
-        logging.warning("DATABASE_URL is unset; history and persistent admin management are unavailable.")
-        return
-    db_pool = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=5)
+    if DATABASE_URL.startswith(("postgres://", "postgresql://")):
+        try:
+            db_pool = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=5)
+            logging.info("Connected to PostgreSQL.")
+        except Exception as exc:
+            logging.warning("PostgreSQL connection failed (%s); using local SQLite database at %s", exc, DATABASE_PATH)
+            db_pool = SQLitePool(DATABASE_PATH)
+    else:
+        sqlite_path = DATABASE_PATH
+        if DATABASE_URL.startswith("sqlite:///"):
+            sqlite_path = DATABASE_URL[len("sqlite:///"):]
+        db_pool = SQLitePool(sqlite_path)
+        logging.info("Using local SQLite database at %s.", sqlite_path)
     async with db_pool.acquire() as conn:
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS download_history (
@@ -378,10 +435,26 @@ async def admin_add(message: Message):
 
 @dp.message(Command("admin_remove"))
 async def admin_remove(message: Message):
+    if not message.from_user or not await is_owner(message.from_user.id):
+        await message.answer("⛔ Owner only. Only the configured bot owner can remove admin access.")
+        return
+    parts = (message.text or "").split()
+    if len(parts) != 2 or not parts[1].isdigit():
+        await message.answer("Usage: /admin_remove USER_ID")
+        return
+    target_id = int(parts[1])
+    if target_id in OWNER_IDS or target_id in ADMIN_IDS:
+        await message.answer("This ID is configured in OWNER_IDS or ADMIN_IDS. Remove it from .env to revoke access.")
+        return
+    if db_pool is None:
+        await message.answer("Database is unavailable; cannot remove admin access.")
+        return
+    async with db_pool.acquire() as conn:
+        result = await conn.execute("DELETE FROM bot_admins WHERE user_id = $1", target_id)
     await message.answer(
-        "Admin removal is disabled in chat. Only the configured owner can grant admin access "
-        "with /admin_add USER_ID. To revoke access, remove the user from the bot_admins table "
-        "in PostgreSQL or remove them from ADMIN_IDS in your .env file."
+        f"✅ Admin {target_id} removed."
+        if result.endswith("1")
+        else f"Admin {target_id} was not found in the database."
     )
 
 
