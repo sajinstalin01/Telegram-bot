@@ -70,3 +70,12 @@ To automatically commit and push edits you make in the local project folder:
 5. Leave the PowerShell window open. It checks for changes every 5 seconds, commits them, and pushes commits to `origin/main`. Press `Ctrl+C` to stop it.
 
 **Security note:** Automatic commits publish all non-ignored changes in the repository. Review the files and `.gitignore` first, and never store tokens, passwords, or private data in tracked files. The script expects the `main` branch and will not merge remote conflicts automatically.
+
+### Bash and Python auto-push alternatives
+The same local watcher is also available in two formats:
+- **Bash (Linux/macOS/WSL):** `chmod +x auto-push.sh && ./auto-push.sh`
+- **Python (Windows/Linux/macOS):** `python auto_push.py` (requires Python 3 and Git installed)
+
+Both scripts check for local changes every 5 seconds by default, commit them, fetch `origin/main`, and push local commits when the local branch is not behind the remote. If GitHub has new commits that are not in the local branch, the scripts stop rather than overwrite remote history; pull/reconcile manually and restart. You can pass a polling interval in seconds, e.g. `python auto_push.py 10` or `./auto-push.sh 10`.
+
+Use only one watcher for a repository at a time. These scripts publish every non-ignored change in the working tree, so inspect `.gitignore` and never commit credentials or private data. Configure Git identity and GitHub authentication before running.
